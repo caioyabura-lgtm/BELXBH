@@ -1,0 +1,178 @@
+﻿<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#fcf593">
+<title>ONÇA-LINCE — First International Meeting</title>
+<style>
+/* DOCUMENT */
+* { box-sizing: border-box; }
+html, body { width:100%; height:100%; margin:0; overflow:hidden; background:#fcf593; }
+#horizontalViewport { position:relative; z-index:1; width:100%; height:100vh; height:100dvh; overflow-x:auto; overflow-y:hidden; scrollbar-width:none; }
+#horizontalViewport::-webkit-scrollbar { display:none; }
+#documentTrack { width:max-content; height:100%; }
+#documentImage { display:block; height:100%; width:auto; max-width:none; user-select:none; }
+/* HORIZONTAL NAVIGATION */
+#horizontalViewport { cursor:grab; }
+#horizontalViewport.dragging { cursor:grabbing; }
+#horizontalViewport:focus-visible { outline:2px solid #222; outline-offset:-2px; }
+#navigationHint { position:fixed; z-index:10; right:16px; bottom:max(16px, env(safe-area-inset-bottom)); margin:0; padding:6px 9px; color:#222; background:#fcf593; font:12px/1.4 Arial, sans-serif; letter-spacing:.03em; pointer-events:none; transition:opacity .25s ease, visibility .25s; }
+#navigationHint.dismissed { opacity:0; visibility:hidden; }
+/* GLB APPEARANCE */
+#glbLayer { position:fixed; z-index:5; left:55%; top:50%; width:min(42vw,620px); height:min(75vh,760px); height:min(75dvh,760px); transform:translate(-50%,-50%); opacity:0; visibility:hidden; pointer-events:none; }
+model-viewer { width:100%; height:100%; background:transparent; pointer-events:none; --poster-color:transparent; }
+model-viewer::part(default-progress-bar) { display:none; }
+/* PROGRESS */
+#progress { position:fixed; z-index:10; bottom:0; left:0; width:100%; height:1px; background:#222; opacity:.45; transform:scaleX(0); transform-origin:left; pointer-events:none; }
+/* RESPONSIVE */
+@media(max-width:760px) { #glbLayer { width:70vw; height:65vh; height:65dvh; } }
+@media(prefers-reduced-motion:reduce) { #horizontalViewport { scroll-behavior:auto; } }
+@media(prefers-reduced-motion:reduce) { #navigationHint { transition:none; } }
+</style>
+</head>
+<body>
+<main id="horizontalViewport" tabindex="0" aria-label="Prancha panorâmica ONÇA-LINCE. Percorra horizontalmente com as setas do teclado, a roda do mouse ou deslizando na tela.">
+  <div id="documentTrack">
+    <img id="documentImage" src="./firstmeeting.svg" width="9073.277" height="597.8425" draggable="false" fetchpriority="high"
+      alt="Prancha integral ONÇA-LINCE — First International Meeting: encontro internacional, agenda, organização e equipe, informações estratégicas, candidatura e conclusão.">
+  </div>
+</main>
+<div id="glbLayer">
+  <model-viewer id="heroModel" alt="Silhueta de harpista e fagotista — ONÇA-LINCE"
+    interaction-prompt="none" disable-pan shadow-intensity="0" exposure="1.6"
+    environment-image="neutral" orientation="0deg 0deg 0deg" camera-target="auto auto auto"
+    camera-orbit="0deg 5deg 106%" field-of-view="20deg" loading="eager" tabindex="-1">
+  </model-viewer>
+</div>
+<div id="progress" aria-hidden="true"></div>
+<p id="navigationHint">Explore na horizontal <span aria-hidden="true">→</span></p>
+<script>
+// Ajuste aqui a aparição: 0 = extremidade esquerda; 1 = extremidade direita.
+const GLB_START = 0.36; // Início do fade in, após organização/equipe.
+const GLB_PEAK = 0.43;  // Presença máxima na transição estratégica.
+const GLB_END = 0.52;   // Final do fade out.
+const GLB_MAX_OPACITY = 0.82;
+const GLB_MOBILE_OPACITY = 0.75;
+const GLB_PRELOAD = 0.10; // Carregar antes do trecho, ainda sem animar.
+const baseTheta = 0;
+const basePhi = 5;
+const baseRadius = 106;
+const zoomAmplitude = 4;
+const zoomSpeed = 0.0008;
+
+const viewport = document.getElementById('horizontalViewport');
+const board = document.getElementById('documentImage');
+const layer = document.getElementById('glbLayer');
+const viewer = document.getElementById('heroModel');
+const progressLine = document.getElementById('progress');
+const navigationHint = document.getElementById('navigationHint');
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+const mobile = matchMedia('(max-width: 760px)');
+const clamp = value => Math.max(0, Math.min(1, value));
+const ease = value => value * value * (3 - 2 * value);
+let modelRequested = false, modelLoaded = false, visible = false;
+let updateFrame = 0, cameraFrame = 0, cameraStart = null;
+
+// horizontal scrolling: preservar o eixo horizontal nativo do trackpad.
+viewport.addEventListener('wheel', event => {
+  if (event.ctrlKey || event.metaKey || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return;
+  event.preventDefault();
+  const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewport.clientWidth : 1;
+  viewport.scrollLeft += event.deltaY * unit;
+}, { passive:false });
+window.addEventListener('keydown', event => {
+  if (event.altKey || event.ctrlKey || event.metaKey) return;
+  if (!['ArrowRight','ArrowLeft','Home','End'].includes(event.key)) return;
+  event.preventDefault();
+  const maximum = viewport.scrollWidth - viewport.clientWidth;
+  const destination = event.key === 'Home' ? 0 : event.key === 'End' ? maximum :
+    viewport.scrollLeft + viewport.clientWidth * .4 * (event.key === 'ArrowRight' ? 1 : -1);
+  viewport.scrollTo({ left:destination, behavior:reducedMotion.matches ? 'instant' : 'smooth' });
+});
+
+// drag navigation: touch e caneta mantêm os gestos nativos.
+let drag = null;
+viewport.addEventListener('pointerdown', event => {
+  if (event.pointerType !== 'mouse' || event.button !== 0) return;
+  drag = { id:event.pointerId, x:event.clientX, left:viewport.scrollLeft };
+  viewport.setPointerCapture(event.pointerId);
+  viewport.classList.add('dragging');
+  viewport.focus({ preventScroll:true });
+  event.preventDefault();
+});
+viewport.addEventListener('pointermove', event => {
+  if (drag && event.pointerId === drag.id) viewport.scrollLeft = drag.left + drag.x - event.clientX;
+});
+function endDrag() { drag = null; viewport.classList.remove('dragging'); }
+viewport.addEventListener('pointerup', endDrag);
+viewport.addEventListener('pointercancel', endDrag);
+viewport.addEventListener('lostpointercapture', endDrag);
+
+function loadModel() {
+  if (modelRequested) return;
+  modelRequested = true;
+  const script = document.createElement('script');
+  script.type = 'module';
+  script.src = 'https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js';
+  document.head.append(script);
+  viewer.setAttribute('src', './silhueta.glb');
+}
+
+// GLB scroll timeline
+function update() {
+  updateFrame = 0;
+  const maximum = viewport.scrollWidth - viewport.clientWidth;
+  const progress = maximum > 0 ? clamp(viewport.scrollLeft / maximum) : 0;
+  // A indicação reaparece ao retornar à extremidade inicial.
+  navigationHint.classList.toggle('dismissed', viewport.scrollLeft > 48 || maximum <= 0);
+  if (progress >= GLB_START - GLB_PRELOAD && progress <= GLB_END + GLB_PRELOAD) loadModel();
+  visible = progress > GLB_START && progress < GLB_END;
+  const entering = progress <= GLB_PEAK;
+  const phase = entering ? clamp((progress - GLB_START)/(GLB_PEAK - GLB_START)) :
+    clamp((progress - GLB_PEAK)/(GLB_END - GLB_PEAK));
+  const eased = ease(phase);
+  const opacity = visible ? (entering ? eased : 1 - eased) : 0;
+  layer.style.opacity = opacity * (mobile.matches ? GLB_MOBILE_OPACITY : GLB_MAX_OPACITY);
+  layer.style.visibility = visible ? 'visible' : 'hidden';
+  const y = reducedMotion.matches ? 0 : entering ? 10*(1-eased) : -10*eased;
+  const scale = reducedMotion.matches ? 1 : entering ? .97+.03*eased : 1+.02*eased;
+  layer.style.transform = 'translate(-50%, -50%) translateY(' + y + 'px) scale(' + scale + ')';
+  // progress indicator
+  progressLine.style.transform = 'scaleX(' + progress + ')';
+  syncCamera();
+}
+function scheduleUpdate() { if (!updateFrame) updateFrame = requestAnimationFrame(update); }
+
+// camera breathing: nenhum giro; RAF somente com modelo visível e aba ativa.
+function breathe(time) {
+  if (cameraStart === null) cameraStart = time;
+  const radius = baseRadius + Math.sin((time-cameraStart)*zoomSpeed)*zoomAmplitude;
+  viewer.cameraOrbit = baseTheta + 'deg ' + basePhi + 'deg ' + radius.toFixed(3) + '%';
+  cameraFrame = requestAnimationFrame(breathe);
+}
+function syncCamera() {
+  if (visible && modelLoaded && !reducedMotion.matches && !document.hidden) {
+    if (!cameraFrame) cameraFrame = requestAnimationFrame(breathe);
+  } else {
+    cancelAnimationFrame(cameraFrame);
+    cameraFrame = 0;
+    cameraStart = null;
+    if (modelLoaded) viewer.cameraOrbit = baseTheta + 'deg ' + basePhi + 'deg ' + baseRadius + '%';
+  }
+}
+viewer.addEventListener('load', () => { modelLoaded = true; syncCamera(); });
+viewer.addEventListener('error', () => { modelLoaded = false; syncCamera(); });
+viewport.addEventListener('scroll', scheduleUpdate, { passive:true });
+new ResizeObserver(scheduleUpdate).observe(viewport);
+board.addEventListener('load', scheduleUpdate);
+reducedMotion.addEventListener('change', scheduleUpdate);
+mobile.addEventListener('change', scheduleUpdate);
+document.addEventListener('visibilitychange', syncCamera);
+if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+window.addEventListener('pageshow', () => { viewport.scrollLeft = 0; scheduleUpdate(); });
+viewport.scrollLeft = 0;
+update();
+</script>
+</body>
+</html>
